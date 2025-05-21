@@ -19,7 +19,7 @@ pipeline {
                script{
                 withAWS(region: 'us-east-1', credentials: 'aws-creds') {
                     sh """
-                        cd 70-ingress-alb
+                        cd 10-sg
                         terraform init -reconfigure
                         terraform plan
                     """
@@ -28,48 +28,64 @@ pipeline {
                }
             }
         }
-        stage('Apply or Destroy') {
+        stage('Apply') {
+            /* input {
+                message "Should we continue?"
+                ok "Yes, we should."
+            } */
             steps {
                script{
                 withAWS(region: 'us-east-1', credentials: 'aws-creds') {
-                    
-                     if (params.ACTION == 'apply') {
-                        sh """
-                            cd 70-ingress-alb
-                            terraform apply -auto-approve
-                        """
-                    } else {
-                        sh """
-                            cd 70-ingress-alb
-                            terraform destroy -auto-approve
-                        """
-                    }
+                    sh """
+                        cd 10-sg
+                        terraform apply -auto-approve
+                    """
                 }
                  
                }
             }
         }
-        stage('Destroy Infra') {
+        stage('Parallel Stages') {
             when { 
-                expression { params.ACTION == 'destroy'}
+                expression { params.ACTION == 'apply'}
             }
-            steps {
-               script{
-                withAWS(region: 'us-east-1', credentials: 'aws-creds') {
-                    def list = ["60-acm", "50-ecr", "40-eks", "30-rds", "20-bastion", "10-sg", "00-vpc"]
-                    for(item in list){
-                        sh """
-                            cd $item
-                            terraform init -reconfigure
-                            terraform destroy -auto-approve
-                        """
+            parallel {
+                stage('20-bastion') {    
+                    steps {
+                        build job: '20-bastion', parameters: [string(name: 'ACTION', value: 'apply')], wait: false
                     }
                 }
-                 
-               }
+                stage('30-rds') {
+                    steps {
+                        build job: '30-rds', parameters: [string(name: 'ACTION', value: 'apply')], wait: false
+                    }
+                }
+                stage('40-eks') {
+                    steps {
+                        build job: '40-eks', parameters: [string(name: 'ACTION', value: 'apply')], wait: false
+                    }
+                }
+                stage('50-ecr') {
+                    steps {
+                        build job: '50-ecr', parameters: [string(name: 'ACTION', value: 'apply')], wait: false
+                    }
+                }
             }
         }
-        
+        stage('Sequential') {
+            stages {
+                stage('60-acm') {
+                    steps {
+                        build job: '60-acm', parameters: [string(name: 'ACTION', value: 'apply')], wait: false
+                    }
+                }
+                stage('70-ingress-alb') {
+                    steps {
+                        build job: '70-ingress-alb', parameters: [string(name: 'ACTION', value: 'apply')], wait: false
+                    }
+                }
+            }
+        }
     }
     post { 
         always { 
